@@ -12,7 +12,7 @@ import (
 func main() {
 	mux := http.NewServeMux()
 
-	distDir := "../frontend/dist"
+	distDir := "frontend/dist"
 	if _, err := os.Stat(distDir); err == nil {
 		frontendFS := http.FileServer(http.Dir(distDir))
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
