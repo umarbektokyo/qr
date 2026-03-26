@@ -10,6 +10,7 @@ QR codes are generated entirely client-side for instant preview with zero networ
 - Encode any URL or text
 - Error correction levels: L (7%), M (15%), Q (25%), H (30%)
 - Auto-fallback to lower EC when content is too long
+- Batch mode: generate multiple QR codes at once with custom names
 
 **Colors**
 - Foreground and background color pickers
@@ -28,11 +29,18 @@ QR codes are generated entirely client-side for instant preview with zero networ
 - Adjustable logo size and padding
 - Mono-color tinting
 
+**Scan Check**
+- Real-time scannability scoring for each QR code
+- Tests decoding at multiple sizes, noise levels, and contrast conditions
+- Uses BarcodeDetector API (Chrome/Edge) or ZXing WASM + heuristic fallback (Safari/Firefox)
+- Actionable tips when scan score is low
+
 **Export**
 - PNG (with transparency support)
 - JPEG (with quality slider)
 - SVG (vector, fully scalable)
-- Resolution up to 4096x4096px
+- Resolution up to 4096x4096px (typeable sliders for exact values)
+- Batch mode downloads all QR codes as a single ZIP file
 
 ## Quick Start
 
@@ -88,9 +96,11 @@ qr/
 
 ## Tech Stack
 
-- **Frontend**: Svelte 5, Vite, [qrcode-generator](https://github.com/nickymarino/qrcode-generator) (15KB, zero deps)
-- **Backend**: Go (standard library only, zero external deps)
-- **UI**: Blender-inspired dark theme with Inter typeface, beveled widgets, disclosure panels
+- **Frontend**: Svelte 5, Vite, [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) (15KB, zero deps)
+- **Scanning**: [BarcodeDetector API](https://developer.mozilla.org/en-US/docs/Web/API/BarcodeDetector) (native), [zxing-wasm](https://github.com/nicolo-ribaudo/nicolo-nicolo-nicolo/zxing-wasm) (Safari/Firefox fallback)
+- **Export**: [JSZip](https://stuk.github.io/jszip/) for batch ZIP downloads
+- **Backend**: Go 1.24 (standard library only, zero external deps)
+- **UI**: Blender-inspired dark theme with Inter typeface
 
 ## Docker
 

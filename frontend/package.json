@@ -14,9 +14,11 @@
   "license": "ISC",
   "dependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
+    "jszip": "^3.10.1",
     "qrcode-generator": "^2.0.4",
     "svelte": "^5.55.0",
-    "vite": "^8.0.2"
+    "vite": "^8.0.2",
+    "zxing-wasm": "^3.0.1"
   },
   "devDependencies": {
     "vitest": "^4.1.1"

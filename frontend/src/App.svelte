@@ -1,41 +1,137 @@
 <script>
   import { generateMatrix, renderToCanvas, renderToSVG } from './qr-render.js'
+  import JSZip from 'jszip'
+  import { readBarcodes } from 'zxing-wasm/reader'
 
-  let content = $state('https://example.com')
-  let size = $state(1024)
-  let errorCorrection = $state('M')
-  let fgColor = $state('#000000')
-  let bgColor = $state('#ffffff')
-  let transparentBg = $state(false)
-  let margin = $state(4)
-  let shape = $state('square')
-  let exportFormat = $state('png')
-  let jpegQuality = $state(95)
+  const DEFAULTS = {
+    batchMode: false,
+    content: 'umarbek.dev',
+    entries: [{ id: 1, content: 'umarbek.dev', name: 'QR 1' }],
+    nextId: 2,
+    size: 1024, errorCorrection: 'M',
+    fgColor: '#000000', bgColor: '#ffffff', transparentBg: false,
+    margin: 4, shape: 'square',
+    exportFormat: 'png', jpegQuality: 95,
+    gradient: false, gradientType: 'linear', gradientColor: '#4b76c2',
+    eyeFrameShape: 'square', eyeBallShape: 'square',
+    eyeColorEnabled: false, eyeFrameColor: '#000000', eyeBallColor: '#000000',
+    logoSize: 20, logoColor: '', logoColorEnabled: false, logoPadding: 6,
+    panelSections: { content: true, presets: true, colors: false, size: false, shapes: false, logo: false, scan: false, export: true },
+  }
+
+  function loadSaved() {
+    try {
+      const raw = localStorage.getItem('qr-settings')
+      if (raw) return { ...DEFAULTS, ...JSON.parse(raw) }
+    } catch (e) {}
+    return { ...DEFAULTS }
+  }
+
+  const saved = loadSaved()
+
+  let batchMode = $state(saved.batchMode)
+  let content = $state(saved.content)
+  let entries = $state(saved.entries)
+  let nextId = $state(saved.nextId)
+  let size = $state(saved.size)
+  let errorCorrection = $state(saved.errorCorrection)
+  let fgColor = $state(saved.fgColor)
+  let bgColor = $state(saved.bgColor)
+  let transparentBg = $state(saved.transparentBg)
+  let margin = $state(saved.margin)
+  let shape = $state(saved.shape)
+  let exportFormat = $state(saved.exportFormat)
+  let jpegQuality = $state(saved.jpegQuality)
 
   // Gradient
-  let gradient = $state(false)
-  let gradientType = $state('linear')
-  let gradientColor = $state('#4b76c2')
+  let gradient = $state(saved.gradient)
+  let gradientType = $state(saved.gradientType)
+  let gradientColor = $state(saved.gradientColor)
 
   // Eye customization
-  let eyeFrameShape = $state('square')
-  let eyeBallShape = $state('square')
-  let eyeColorEnabled = $state(false)
-  let eyeFrameColor = $state('#000000')
-  let eyeBallColor = $state('#000000')
+  let eyeFrameShape = $state(saved.eyeFrameShape)
+  let eyeBallShape = $state(saved.eyeBallShape)
+  let eyeColorEnabled = $state(saved.eyeColorEnabled)
+  let eyeFrameColor = $state(saved.eyeFrameColor)
+  let eyeBallColor = $state(saved.eyeBallColor)
 
-  // Logo
+  // Logo (image can't be serialized — only settings persist)
   let logoFile = $state(null)
   let logoImg = $state(null)
-  let logoSize = $state(20)
-  let logoColor = $state('')
-  let logoColorEnabled = $state(false)
-  let logoPadding = $state(6)
+  let logoSize = $state(saved.logoSize)
+  let logoColor = $state(saved.logoColor)
+  let logoColorEnabled = $state(saved.logoColorEnabled)
+  let logoPadding = $state(saved.logoPadding)
 
-  let panelSections = $state({ content: true, presets: true, colors: false, size: false, shapes: false, logo: false, export: true })
-  let canvas = $state(null)
-  let errorMsg = $state('')
-  let ecWarning = $state('')
+  let panelSections = $state(saved.panelSections)
+
+  // Save to localStorage on any change
+  $effect(() => {
+    const data = {
+      batchMode, content, entries, nextId,
+      size, errorCorrection, fgColor, bgColor, transparentBg,
+      margin, shape, exportFormat, jpegQuality,
+      gradient, gradientType, gradientColor,
+      eyeFrameShape, eyeBallShape, eyeColorEnabled, eyeFrameColor, eyeBallColor,
+      logoSize, logoColor, logoColorEnabled, logoPadding,
+      panelSections,
+    }
+    try { localStorage.setItem('qr-settings', JSON.stringify(data)) } catch (e) {}
+  })
+
+  function resetAll() {
+    if (!confirm('Reset all settings and content to defaults?')) return
+    localStorage.removeItem('qr-settings')
+    batchMode = DEFAULTS.batchMode
+    content = DEFAULTS.content
+    entries = structuredClone(DEFAULTS.entries)
+    nextId = DEFAULTS.nextId
+    size = DEFAULTS.size; errorCorrection = DEFAULTS.errorCorrection
+    fgColor = DEFAULTS.fgColor; bgColor = DEFAULTS.bgColor; transparentBg = DEFAULTS.transparentBg
+    margin = DEFAULTS.margin; shape = DEFAULTS.shape
+    exportFormat = DEFAULTS.exportFormat; jpegQuality = DEFAULTS.jpegQuality
+    gradient = DEFAULTS.gradient; gradientType = DEFAULTS.gradientType; gradientColor = DEFAULTS.gradientColor
+    eyeFrameShape = DEFAULTS.eyeFrameShape; eyeBallShape = DEFAULTS.eyeBallShape
+    eyeColorEnabled = DEFAULTS.eyeColorEnabled; eyeFrameColor = DEFAULTS.eyeFrameColor; eyeBallColor = DEFAULTS.eyeBallColor
+    logoFile = null; logoImg = null
+    logoSize = DEFAULTS.logoSize; logoColor = DEFAULTS.logoColor; logoColorEnabled = DEFAULTS.logoColorEnabled; logoPadding = DEFAULTS.logoPadding
+    panelSections = { ...DEFAULTS.panelSections }
+  }
+  let scanScores = $state({})
+  let canvases = $state({})
+  let errorMsgs = $state({})
+  let ecWarnings = $state({})
+
+  function addEntry() {
+    entries.push({ id: nextId, content: '', name: `QR ${nextId}` })
+    nextId++
+  }
+
+  function toggleBatchMode() {
+    batchMode = !batchMode
+    if (batchMode) {
+      // Sync single content into first entry
+      entries[0].content = content
+    } else {
+      // Sync first entry back to single content
+      content = entries[0].content
+    }
+  }
+
+  function removeEntry(id) {
+    if (entries.length <= 1) return
+    const idx = entries.findIndex(e => e.id === id)
+    if (idx !== -1) entries.splice(idx, 1)
+    delete canvases[id]
+    delete errorMsgs[id]
+    delete ecWarnings[id]
+  }
+
+  function bindCanvas(el, getId) {
+    const id = typeof getId === 'function' ? getId() : getId
+    canvases[id] = el
+    return { destroy() { delete canvases[id] } }
+  }
 
   function toggleSection(key) { panelSections[key] = !panelSections[key] }
 
@@ -52,45 +148,256 @@
     }
   }
 
-  function render() {
-    if (!canvas || !content.trim()) {
-      if (canvas) {
-        canvas.width = size; canvas.height = size
-        const ctx = canvas.getContext('2d')
-        ctx.fillStyle = '#282828'; ctx.fillRect(0, 0, size, size)
-        ctx.fillStyle = '#555'; ctx.font = `${Math.max(14, size / 40)}px Inter, sans-serif`
-        ctx.textAlign = 'center'
-        ctx.fillText('Enter content to generate a QR code', size / 2, size / 2)
-      }
-      errorMsg = ''; ecWarning = ''; return
+  function renderPlaceholder(cvs, msg, submsg) {
+    cvs.width = size; cvs.height = size
+    const ctx = cvs.getContext('2d')
+    ctx.fillStyle = '#282828'; ctx.fillRect(0, 0, size, size)
+    ctx.textAlign = 'center'
+    ctx.fillStyle = msg === 'Content too long to encode' ? '#e87d0d' : '#555'
+    ctx.font = `${Math.max(14, size / 40)}px Inter, sans-serif`
+    ctx.fillText(msg, size / 2, submsg ? size / 2 - 10 : size / 2)
+    if (submsg) {
+      ctx.fillStyle = '#888'; ctx.font = `${Math.max(11, size / 55)}px Inter, sans-serif`
+      ctx.fillText(submsg, size / 2, size / 2 + 15)
+    }
+  }
+
+  function renderQR(cvs, text, key) {
+    if (!cvs || !text.trim()) {
+      if (cvs) renderPlaceholder(cvs, 'Enter content to generate a QR code')
+      errorMsgs[key] = ''; ecWarnings[key] = ''; return
     }
     try {
-      const { matrix, actualEC } = generateMatrix(content, errorCorrection)
-      ecWarning = actualEC !== errorCorrection ? `EC fell back to ${actualEC}` : ''
-      errorMsg = ''
-      renderToCanvas(canvas, matrix, getOpts())
+      const { matrix, actualEC } = generateMatrix(text, errorCorrection)
+      ecWarnings[key] = actualEC !== errorCorrection ? `EC fell back to ${actualEC}` : ''
+      errorMsgs[key] = ''
+      renderToCanvas(cvs, matrix, getOpts())
     } catch (e) {
-      errorMsg = 'Content too long to encode'
-      ecWarning = ''
-      canvas.width = size; canvas.height = size
-      const ctx = canvas.getContext('2d')
-      ctx.fillStyle = '#282828'; ctx.fillRect(0, 0, size, size)
-      ctx.fillStyle = '#e87d0d'
-      ctx.font = `${Math.max(14, size / 40)}px Inter, sans-serif`
-      ctx.textAlign = 'center'
-      ctx.fillText('Content too long to encode', size / 2, size / 2 - 10)
-      ctx.fillStyle = '#888'; ctx.font = `${Math.max(11, size / 55)}px Inter, sans-serif`
-      ctx.fillText('Try shorter text or lower error correction', size / 2, size / 2 + 15)
+      errorMsgs[key] = 'Content too long to encode'
+      ecWarnings[key] = ''
+      renderPlaceholder(cvs, 'Content too long to encode', 'Try shorter text or lower error correction')
+    }
+  }
+
+  function render() {
+    if (batchMode) {
+      for (const entry of entries) renderQR(canvases[entry.id], entry.content, entry.id)
+    } else {
+      renderQR(canvases['single'], content, 'single')
     }
   }
 
   $effect(() => {
-    content; size; errorCorrection; fgColor; bgColor; transparentBg; margin; shape;
+    // Track reactivity
+    content; batchMode;
+    entries.map(e => e.content)
+    size; errorCorrection; fgColor; bgColor; transparentBg; margin; shape;
     gradient; gradientType; gradientColor;
     eyeFrameShape; eyeBallShape; eyeColorEnabled; eyeFrameColor; eyeBallColor;
     logoImg; logoSize; logoColor; logoColorEnabled; logoPadding;
-    if (canvas) render()
+    Object.keys(canvases).length;
+    render()
   })
+
+  // Scannability testing — BarcodeDetector API (native) with ZXing+heuristic fallback
+  const barcodeDetector = (() => {
+    if (typeof globalThis.BarcodeDetector === 'undefined') return null
+    try { return new BarcodeDetector({ formats: ['qr_code'] }) } catch (e) { return null }
+  })()
+  const scanEngineName = barcodeDetector ? 'BarcodeDetector API' : 'ZXing + Heuristic'
+
+  const zxingOpts = {
+    formats: ['QRCode'],
+    tryHarder: true, tryRotate: true, tryInvert: true,
+    tryDownscale: true, tryDenoise: true,
+    maxNumberOfSymbols: 1,
+  }
+
+  function makeTestCanvas(src, sz) {
+    const tc = document.createElement('canvas')
+    tc.width = sz; tc.height = sz
+    const tctx = tc.getContext('2d')
+    tctx.fillStyle = '#ffffff'
+    tctx.fillRect(0, 0, sz, sz)
+    tctx.drawImage(src, 0, 0, sz, sz)
+    return tc
+  }
+
+  function addNoise(tc, level) {
+    const tctx = tc.getContext('2d')
+    const imgData = tctx.getImageData(0, 0, tc.width, tc.height)
+    for (let i = 0; i < imgData.data.length; i += 4) {
+      const n = (Math.random() - 0.5) * level * 2
+      imgData.data[i] = Math.max(0, Math.min(255, imgData.data[i] + n))
+      imgData.data[i+1] = Math.max(0, Math.min(255, imgData.data[i+1] + n))
+      imgData.data[i+2] = Math.max(0, Math.min(255, imgData.data[i+2] + n))
+    }
+    tctx.putImageData(imgData, 0, 0)
+  }
+
+  function reduceContrast(tc, factor) {
+    const tctx = tc.getContext('2d')
+    const imgData = tctx.getImageData(0, 0, tc.width, tc.height)
+    for (let i = 0; i < imgData.data.length; i += 4) {
+      imgData.data[i] = Math.round(128 + (imgData.data[i] - 128) * factor)
+      imgData.data[i+1] = Math.round(128 + (imgData.data[i+1] - 128) * factor)
+      imgData.data[i+2] = Math.round(128 + (imgData.data[i+2] - 128) * factor)
+    }
+    tctx.putImageData(imgData, 0, 0)
+  }
+
+  async function decodeBarcodeDetector(tc, expectedText) {
+    try {
+      const results = await barcodeDetector.detect(tc)
+      return results.some(r => r.rawValue === expectedText) ? 1 : 0
+    } catch (e) { return 0 }
+  }
+
+  async function decodeZxing(tc, expectedText) {
+    try {
+      const tctx = tc.getContext('2d')
+      const imgData = tctx.getImageData(0, 0, tc.width, tc.height)
+      const results = await readBarcodes(imgData, zxingOpts)
+      return results.some(r => r.text === expectedText) ? 1 : 0
+    } catch (e) { return 0 }
+  }
+
+  // Heuristic score based on design properties (0-100)
+  function heuristicScore() {
+    let score = 0
+
+    // Contrast (0-30): luminance difference between fg and bg
+    function lum(hex) {
+      const r = parseInt(hex.slice(1, 3), 16) / 255
+      const g = parseInt(hex.slice(3, 5), 16) / 255
+      const b = parseInt(hex.slice(5, 7), 16) / 255
+      const lin = c => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+      return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+    }
+    const bg = transparentBg ? '#ffffff' : bgColor
+    const fgLum = lum(fgColor), bgLum = lum(bg)
+    const contrastRatio = (Math.max(fgLum, bgLum) + 0.05) / (Math.min(fgLum, bgLum) + 0.05)
+    // WCAG: 4.5:1 is good, 7:1 is excellent, 21:1 is max (black/white)
+    score += Math.min(30, Math.round((contrastRatio / 10) * 30))
+
+    // Error correction (0-20)
+    const ecScores = { L: 6, M: 12, Q: 16, H: 20 }
+    score += ecScores[errorCorrection] || 12
+
+    // Margin (0-15)
+    if (margin >= 4) score += 15
+    else if (margin >= 2) score += 10
+    else if (margin >= 1) score += 5
+
+    // Shape simplicity (0-20)
+    const shapeScores = {
+      square: 20, rounded: 18, connected: 16, dots: 14,
+      'classy': 12, 'classy-rounded': 12, 'edge-cut': 13,
+      diamond: 10, hexagon: 10, star: 8,
+    }
+    score += shapeScores[shape] || 10
+
+    // Logo penalty (0-10, inverted)
+    if (!logoImg) score += 10
+    else if (logoSize <= 15) score += 7
+    else if (logoSize <= 25) score += 4
+    else score += 1
+
+    // Gradient penalty (0-5)
+    score += gradient ? 2 : 5
+
+    return Math.min(100, score)
+  }
+
+  async function testScanNative(text) {
+    if (!text.trim()) return null
+    try {
+      const { matrix } = generateMatrix(text, errorCorrection)
+      const src = document.createElement('canvas')
+      renderToCanvas(src, matrix, getOpts())
+
+      const tests = []
+      for (const sz of [400, 300, 200, 150, 100, 80, 60, 45]) {
+        tests.push(decodeBarcodeDetector(makeTestCanvas(src, sz), text))
+      }
+      for (const noiseLevel of [40, 80, 120]) {
+        const tc = makeTestCanvas(src, 250)
+        addNoise(tc, noiseLevel)
+        tests.push(decodeBarcodeDetector(tc, text))
+      }
+      for (const factor of [0.5, 0.3]) {
+        const tc = makeTestCanvas(src, 250)
+        reduceContrast(tc, factor)
+        tests.push(decodeBarcodeDetector(tc, text))
+      }
+      const results = await Promise.all(tests)
+      return Math.round((results.reduce((a, b) => a + b, 0) / results.length) * 100)
+    } catch (e) { return 0 }
+  }
+
+  async function testScanFallback(text) {
+    if (!text.trim()) return null
+    try {
+      const { matrix } = generateMatrix(text, errorCorrection)
+      const src = document.createElement('canvas')
+      renderToCanvas(src, matrix, getOpts())
+
+      // Decode tests with zxing at generous sizes (40% weight)
+      const decodeTests = []
+      for (const sz of [400, 300, 200]) {
+        decodeTests.push(decodeZxing(makeTestCanvas(src, sz), text))
+      }
+      const decodeResults = await Promise.all(decodeTests)
+      const decodePassed = decodeResults.reduce((a, b) => a + b, 0)
+      const decodeScore = (decodePassed / decodeTests.length) * 100
+
+      // Heuristic score (60% weight)
+      const hScore = heuristicScore()
+
+      // If zxing can't decode at 400px, the QR is likely broken → cap at 20
+      if (decodeResults[0] === 0) return Math.min(20, Math.round(hScore * 0.2))
+
+      return Math.round(decodeScore * 0.4 + hScore * 0.6)
+    } catch (e) { return 0 }
+  }
+
+  async function testScan(text) {
+    if (barcodeDetector) return testScanNative(text)
+    return testScanFallback(text)
+  }
+
+  async function runScanCheck() {
+    if (batchMode) {
+      const promises = entries.map(async (entry) => {
+        scanScores[entry.id] = await testScan(entry.content)
+      })
+      await Promise.all(promises)
+    } else {
+      scanScores['single'] = await testScan(content)
+    }
+  }
+
+  // Re-run scan check when render params change
+  let scanDebounce = null
+  $effect(() => {
+    content; batchMode;
+    entries.map(e => e.content)
+    size; errorCorrection; fgColor; bgColor; transparentBg; margin; shape;
+    gradient; gradientType; gradientColor;
+    eyeFrameShape; eyeBallShape; eyeColorEnabled; eyeFrameColor; eyeBallColor;
+    logoImg; logoSize; logoColor; logoColorEnabled; logoPadding;
+    clearTimeout(scanDebounce)
+    scanDebounce = setTimeout(runScanCheck, 300)
+  })
+
+  function scanLabel(score) {
+    if (score === null) return { text: '--', color: '#555' }
+    if (score >= 90) return { text: 'Excellent', color: '#4caf50' }
+    if (score >= 70) return { text: 'Good', color: '#8bc34a' }
+    if (score >= 50) return { text: 'Fair', color: '#ffc107' }
+    if (score >= 30) return { text: 'Poor', color: '#ff9800' }
+    return { text: 'Unscannable', color: '#f44336' }
+  }
 
   function onLogoUpload(e) {
     const file = e.target.files?.[0]
@@ -107,20 +414,42 @@
     if (input) input.value = ''
   }
 
-  function download() {
-    if (!content.trim()) return
-    try {
-      const { matrix } = generateMatrix(content, errorCorrection)
-      const opts = getOpts()
-      if (exportFormat === 'svg') {
-        downloadBlob(new Blob([renderToSVG(matrix, opts)], { type: 'image/svg+xml' }), 'qrcode.svg')
-      } else {
-        const oc = document.createElement('canvas')
-        renderToCanvas(oc, matrix, opts)
-        const mime = exportFormat === 'jpeg' ? 'image/jpeg' : 'image/png'
-        oc.toBlob(b => downloadBlob(b, `qrcode.${exportFormat}`), mime, exportFormat === 'jpeg' ? jpegQuality / 100 : undefined)
+  function sanitizeName(name) {
+    return name.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '') || 'qrcode'
+  }
+
+  function generateBlob(text) {
+    const { matrix } = generateMatrix(text, errorCorrection)
+    const opts = getOpts()
+    if (exportFormat === 'svg') {
+      return Promise.resolve(new Blob([renderToSVG(matrix, opts)], { type: 'image/svg+xml' }))
+    }
+    const oc = document.createElement('canvas')
+    renderToCanvas(oc, matrix, opts)
+    const mime = exportFormat === 'jpeg' ? 'image/jpeg' : 'image/png'
+    return new Promise(resolve => oc.toBlob(resolve, mime, exportFormat === 'jpeg' ? jpegQuality / 100 : undefined))
+  }
+
+  async function download() {
+    if (batchMode && entries.length > 1) {
+      const zip = new JSZip()
+      for (const entry of entries) {
+        if (!entry.content.trim()) continue
+        try {
+          const blob = await generateBlob(entry.content)
+          zip.file(`${sanitizeName(entry.name)}.${exportFormat === 'jpeg' ? 'jpg' : exportFormat}`, blob)
+        } catch (e) {}
       }
-    } catch (e) {}
+      const zipBlob = await zip.generateAsync({ type: 'blob' })
+      downloadBlob(zipBlob, 'qrcodes.zip')
+    } else {
+      const text = batchMode ? entries[0]?.content : content
+      if (!text?.trim()) return
+      try {
+        const blob = await generateBlob(text)
+        downloadBlob(blob, `qrcode.${exportFormat === 'jpeg' ? 'jpg' : exportFormat}`)
+      } catch (e) {}
+    }
   }
 
   function downloadBlob(blob, filename) {
@@ -212,7 +541,7 @@
 <div class="blender-app">
   <div class="header-bar">
     <div class="header-left">
-      <button class="bw header-type-btn">
+      <button class="bw header-type-btn" onclick={resetAll} title="Reset all settings">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h3v3H7zM14 7h3v3h-3zM7 14h3v3H7zM14 14h3v3h-3z"/></svg>
         QR Generator
       </button>
@@ -237,9 +566,37 @@
         </button>
         {#if panelSections.content}
         <div class="bp-body">
+          {#if !batchMode}
+            <div class="field-group">
+              <span class="field-label">Data / URL</span>
+              <textarea class="field-textarea" rows="3" bind:value={content} placeholder="Enter URL or text..."></textarea>
+            </div>
+          {:else}
+            {#each entries as entry, i (entry.id)}
+              <div class="entry-group">
+                <div class="entry-header">
+                  <input class="entry-name-input" bind:value={entry.name} placeholder="Name..." />
+                  {#if entries.length > 1}
+                    <button class="bw icon-sq-sm" onclick={() => removeEntry(entry.id)} title="Remove">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
+                  {/if}
+                </div>
+                <textarea class="field-textarea" rows="2" bind:value={entry.content} placeholder="Enter URL or text..."></textarea>
+              </div>
+            {/each}
+            <button class="bw btn-add-entry" onclick={addEntry}>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+              Add QR Code
+            </button>
+          {/if}
           <div class="field-group">
-            <span class="field-label">Data / URL</span>
-            <textarea class="field-textarea" rows="3" bind:value={content} placeholder="Enter URL or text..."></textarea>
+            <div class="checkbox-row">
+              <button class="bw checkbox-btn" class:active={batchMode} onclick={toggleBatchMode}>
+                {#if batchMode}<svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 5l2.5 3L8 2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>{/if}
+              </button>
+              <span class="field-label" style="text-transform: none; font-size: 11px">Batch Mode</span>
+            </div>
           </div>
           <div class="field-group">
             <span class="field-label">Error Correction</span>
@@ -368,39 +725,6 @@
               </div>
             </div>
           {/if}
-        </div>
-        {/if}
-      </div>
-
-      <!-- Size & Margin -->
-      <div class="bp">
-        <button class="bp-header" onclick={() => toggleSection('size')}>
-          <svg class="bp-disc" class:open={panelSections.size} width="10" height="10" viewBox="0 0 10 10"><path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
-          <svg class="bp-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 3H3v18h18V3zM9 3v18M3 9h18"/></svg>
-          Size & Margin
-        </button>
-        {#if panelSections.size}
-        <div class="bp-body">
-          <div class="field-group">
-            <span class="field-label">Size (px)</span>
-            <div class="blender-slider-wrap">
-              <div class="blender-slider-track">
-                <div class="blender-slider-fill" style="width: {((size - 128) / (4096 - 128)) * 100}%"></div>
-                <span class="blender-slider-text">{size}</span>
-              </div>
-              <input type="range" class="blender-slider-input" min="128" max="4096" step="64" bind:value={size} />
-            </div>
-          </div>
-          <div class="field-group">
-            <span class="field-label">Margin (modules)</span>
-            <div class="blender-slider-wrap">
-              <div class="blender-slider-track">
-                <div class="blender-slider-fill" style="width: {(margin / 16) * 100}%"></div>
-                <span class="blender-slider-text">{margin}</span>
-              </div>
-              <input type="range" class="blender-slider-input" min="0" max="16" step="1" bind:value={margin} />
-            </div>
-          </div>
         </div>
         {/if}
       </div>
@@ -558,6 +882,100 @@
         {/if}
       </div>
 
+      <!-- Size & Margin -->
+      <div class="bp">
+        <button class="bp-header" onclick={() => toggleSection('size')}>
+          <svg class="bp-disc" class:open={panelSections.size} width="10" height="10" viewBox="0 0 10 10"><path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+          <svg class="bp-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 3H3v18h18V3zM9 3v18M3 9h18"/></svg>
+          Size & Margin
+        </button>
+        {#if panelSections.size}
+        <div class="bp-body">
+          <div class="field-group">
+            <span class="field-label">Size (px)</span>
+            <div class="blender-slider-wrap">
+              <div class="blender-slider-track">
+                <div class="blender-slider-fill" style="width: {((size - 128) / (4096 - 128)) * 100}%"></div>
+                <span class="blender-slider-text">{size}</span>
+              </div>
+              <input type="number" class="blender-slider-type" min="128" max="4096" step="64" value={size}
+                onfocus={(e) => e.target.select()}
+                onchange={(e) => { const n = Math.round(Number(e.target.value) / 64) * 64; if (n >= 128 && n <= 4096) size = n; e.target.blur(); }}
+                onkeydown={(e) => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') { e.target.value = size; e.target.blur(); } }} />
+              <input type="range" class="blender-slider-input" min="128" max="4096" step="64" bind:value={size} />
+            </div>
+          </div>
+          <div class="field-group">
+            <span class="field-label">Margin (modules)</span>
+            <div class="blender-slider-wrap">
+              <div class="blender-slider-track">
+                <div class="blender-slider-fill" style="width: {(margin / 16) * 100}%"></div>
+                <span class="blender-slider-text">{margin}</span>
+              </div>
+              <input type="number" class="blender-slider-type" min="0" max="16" step="1" value={margin}
+                onfocus={(e) => e.target.select()}
+                onchange={(e) => { const n = parseInt(e.target.value); if (n >= 0 && n <= 16) margin = n; e.target.blur(); }}
+                onkeydown={(e) => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') { e.target.value = margin; e.target.blur(); } }} />
+              <input type="range" class="blender-slider-input" min="0" max="16" step="1" bind:value={margin} />
+            </div>
+          </div>
+        </div>
+        {/if}
+      </div>
+
+      <!-- Scan Check -->
+      <div class="bp">
+        <button class="bp-header" onclick={() => toggleSection('scan')}>
+          <svg class="bp-disc" class:open={panelSections.scan} width="10" height="10" viewBox="0 0 10 10"><path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+          <svg class="bp-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><path d="M7 12h10"/></svg>
+          Scan Check
+        </button>
+        {#if panelSections.scan}
+        <div class="bp-body">
+          <span class="scan-engine">{scanEngineName}</span>
+          {#if !barcodeDetector}
+            <span class="scan-note">Scores may be lower than real-world results. Use Chrome for more accurate scanning.</span>
+          {/if}
+          {#if !batchMode}
+            {@const score = scanScores['single']}
+            {@const label = scanLabel(score)}
+            <div class="scan-result">
+              <div class="scan-bar-wrap">
+                <div class="scan-bar" style="width: {score ?? 0}%; background: {label.color}"></div>
+              </div>
+              <div class="scan-info">
+                <span class="scan-score" style="color: {label.color}">{score ?? '--'}%</span>
+                <span class="scan-label" style="color: {label.color}">{label.text}</span>
+              </div>
+            </div>
+            {#if score !== null && score < 70}
+              <div class="scan-tips">
+                <span class="field-label">Tips to improve</span>
+                {#if score < 30}<span class="scan-tip">Try a simpler body/eye shape</span>{/if}
+                {#if score < 50}<span class="scan-tip">Increase contrast between foreground and background</span>{/if}
+                {#if errorCorrection === 'L'}<span class="scan-tip">Use a higher error correction level</span>{/if}
+                {#if margin < 2}<span class="scan-tip">Add more margin around the QR code</span>{/if}
+                {#if logoImg && logoSize > 25}<span class="scan-tip">Reduce logo size or use higher EC</span>{/if}
+                {#if gradient}<span class="scan-tip">Gradient colors may reduce contrast</span>{/if}
+              </div>
+            {/if}
+          {:else}
+            {#each entries as entry (entry.id)}
+              {@const score = scanScores[entry.id]}
+              {@const label = scanLabel(score)}
+              <div class="scan-result-row">
+                <span class="scan-entry-name">{entry.name || `QR ${entries.indexOf(entry) + 1}`}</span>
+                <div class="scan-bar-wrap" style="flex:1">
+                  <div class="scan-bar" style="width: {score ?? 0}%; background: {label.color}"></div>
+                </div>
+                <span class="scan-score-sm" style="color: {label.color}">{score ?? '--'}%</span>
+              </div>
+            {/each}
+          {/if}
+        </div>
+        {/if}
+      </div>
+
       <!-- Export -->
       <div class="bp">
         <button class="bp-header" onclick={() => toggleSection('export')}>
@@ -589,7 +1007,7 @@
           {/if}
           <button class="bw btn-action" onclick={download}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-            Download {exportFormat.toUpperCase()}
+            Download {batchMode && entries.length > 1 ? `All (${entries.length}) ` : ''}{exportFormat.toUpperCase()}
           </button>
           <div class="prop-grid" style="margin-top: 6px">
             <span class="prop-label">Output</span>
@@ -611,15 +1029,26 @@
 
     <!-- Preview -->
     <div class="preview-area">
-      <div class="checker-bg">
-        <canvas bind:this={canvas} class="qr-canvas"></canvas>
-      </div>
+      {#if !batchMode}
+        <div class="checker-bg">
+          <canvas use:bindCanvas={() => 'single'} class="qr-canvas"></canvas>
+        </div>
+      {:else}
+        <div class="checker-bg multi">
+          {#each entries as entry (entry.id)}
+            <div class="qr-card">
+              <canvas use:bindCanvas={() => entry.id} class="qr-canvas"></canvas>
+              <span class="qr-card-label">{entry.name || `QR ${entries.indexOf(entry) + 1}`}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
   </div>
 
   <div class="status-bar">
     <div class="status-left">
-      <span class="status-item">{content.length} chars</span>
+      <span class="status-item">{batchMode ? `${entries.length} QRs` : `${content.length} chars`}</span>
       <span class="status-sep">|</span>
       <span class="status-item">{size}x{size}</span>
       <span class="status-sep">|</span>
@@ -628,8 +1057,8 @@
       <span class="status-item">{shape}</span>
       {#if gradient}<span class="status-sep">|</span><span class="status-item">Gradient</span>{/if}
       {#if logoImg}<span class="status-sep">|</span><span class="status-item">Logo: {logoSize}%</span>{/if}
-      {#if ecWarning}<span class="status-sep">|</span><span class="status-item status-warn">{ecWarning}</span>{/if}
-      {#if errorMsg}<span class="status-sep">|</span><span class="status-item status-err">{errorMsg}</span>{/if}
+      {#if Object.values(ecWarnings).some(w => w)}<span class="status-sep">|</span><span class="status-item status-warn">EC fallback</span>{/if}
+      {#if Object.values(errorMsgs).some(e => e)}<span class="status-sep">|</span><span class="status-item status-err">Encoding error</span>{/if}
     </div>
     <div class="status-right">
     </div>
@@ -705,6 +1134,35 @@
   .bp-icon { color: #999; flex-shrink: 0; }
   .bp-body { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 8px; }
 
+  .entry-group {
+    display: flex; flex-direction: column; gap: 3px;
+    padding: 6px 8px; background: #2a2a2a; border-radius: 6px;
+  }
+  .entry-header {
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .entry-name-input {
+    background: transparent; border: none; border-bottom: 1px solid #444;
+    color: #ccc; font-family: 'Inter', sans-serif; font-size: 11px;
+    font-weight: 500; padding: 2px 0; outline: none; flex: 1; min-width: 0;
+  }
+  .entry-name-input:focus { border-bottom-color: #4b76c2; color: #fff; }
+  .icon-sq-sm {
+    width: 18px; height: 18px; display: flex; align-items: center;
+    justify-content: center; padding: 0; flex-shrink: 0; margin-left: 6px;
+  }
+  .btn-add-entry {
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    padding: 4px 10px; font-size: 11px; height: 24px; width: 100%;
+  }
+  .qr-card {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+  }
+  .qr-card-label {
+    color: #aaa; font-size: 11px; font-weight: 500;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .field-group { display: flex; flex-direction: column; gap: 3px; }
   .field-label { color: #888; font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.3px; }
 
@@ -746,6 +1204,21 @@
     position: absolute; inset: 0; width: 100%; height: 100%;
     opacity: 0; cursor: ew-resize; margin: 0;
   }
+  .blender-slider-type {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    background: transparent; border: none; border-radius: 6px;
+    color: transparent; font-family: 'Inter', sans-serif; font-size: 11px;
+    text-align: center; outline: none; caret-color: transparent;
+    z-index: 3; margin: 0; padding: 0; cursor: ew-resize;
+    -moz-appearance: textfield;
+  }
+  .blender-slider-type::-webkit-inner-spin-button,
+  .blender-slider-type::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  .blender-slider-type:focus {
+    background: #1e1e1e; color: #e6e6e6; cursor: text;
+    box-shadow: 0 0 0 1px #4b76c2; caret-color: #e6e6e6;
+  }
+  .blender-slider-type:focus ~ .blender-slider-input { pointer-events: none; }
 
   .btn-row { display: flex; gap: 2px; }
   .btn-sm { padding: 3px 10px; font-size: 11px; height: 22px; flex: 1; text-align: center; }
@@ -791,6 +1264,41 @@
   }
   .preset-card-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+  .scan-engine { font-size: 9px; color: #666; text-align: right; }
+  .scan-note { font-size: 9.5px; color: #997a2d; line-height: 1.4; }
+  .scan-result { display: flex; flex-direction: column; gap: 6px; }
+  .scan-bar-wrap {
+    height: 6px; background: #1e1e1e; border-radius: 3px; overflow: hidden;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
+  }
+  .scan-bar {
+    height: 100%; border-radius: 3px;
+    transition: width 0.3s, background 0.3s;
+  }
+  .scan-info { display: flex; align-items: baseline; gap: 6px; }
+  .scan-score { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .scan-label { font-size: 11px; font-weight: 500; }
+  .scan-tips { display: flex; flex-direction: column; gap: 3px; }
+  .scan-tip {
+    font-size: 10px; color: #aaa; padding-left: 10px;
+    position: relative;
+  }
+  .scan-tip::before {
+    content: ''; position: absolute; left: 0; top: 5px;
+    width: 4px; height: 4px; border-radius: 50%; background: #666;
+  }
+  .scan-result-row {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .scan-entry-name {
+    font-size: 10px; color: #999; width: 60px; flex-shrink: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .scan-score-sm {
+    font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+    width: 32px; text-align: right; flex-shrink: 0;
+  }
+
   .btn-action {
     display: flex; align-items: center; justify-content: center; gap: 6px;
     padding: 6px 12px; font-size: 11px; font-weight: 500; height: 28px; width: 100%;
@@ -831,13 +1339,22 @@
   }
   .checker-bg {
     display: flex; align-items: center; justify-content: center;
-    padding: 20px;
+    padding: 60px;
+  }
+  .checker-bg.multi {
+    display: flex; flex-wrap: wrap; gap: 24px;
+    align-items: center; justify-content: center;
+    padding: 40px;
   }
   .qr-canvas {
-    max-width: calc(100% - 40px);
-    max-height: calc(100% - 40px);
+    max-width: min(70vh, calc(100% - 120px));
+    max-height: 70vh;
     image-rendering: auto;
     border-radius: 2px;
+  }
+  .multi .qr-canvas {
+    max-width: min(45vh, 400px);
+    max-height: 45vh;
   }
 
   .status-bar {
@@ -856,10 +1373,14 @@
     .n-panel { width: 100%; max-height: 45vh; overflow-y: auto; flex-shrink: 0; }
     .region-handle { width: 100%; height: 3px; cursor: ns-resize; }
     .preview-area { min-height: 40vh; }
-    .checker-bg { padding: 16px; }
+    .checker-bg { padding: 24px; }
     .qr-canvas {
-      max-width: calc(100vw - 40px);
+      max-width: calc(100vw - 48px);
       max-height: calc(55vh - 80px);
+    }
+    .multi .qr-canvas {
+      max-width: calc(50vw - 36px);
+      max-height: 35vh;
     }
     .status-bar { flex-wrap: wrap; height: auto; min-height: 20px; padding: 2px 8px; }
     .status-left { flex-wrap: wrap; }
