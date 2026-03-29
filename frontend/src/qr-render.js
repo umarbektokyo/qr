@@ -2,6 +2,19 @@ import qrcode from 'qrcode-generator'
 
 const EC_LEVELS = ['L', 'M', 'Q', 'H']
 
+// Check if content contains non-ASCII characters (e.g. Japanese, emoji)
+function needsUTF8(str) {
+  for (let i = 0; i < str.length; i++) {
+    if (str.charCodeAt(i) > 127) return true
+  }
+  return false
+}
+
+// Convert string to UTF-8 byte string for the QR encoder
+function toUTF8Bytes(str) {
+  return String.fromCharCode(...new TextEncoder().encode(str))
+}
+
 export function generateMatrix(content, ecLevel) {
   if (!content) throw new Error('No content')
   const startIdx = EC_LEVELS.indexOf(ecLevel)
@@ -10,7 +23,11 @@ export function generateMatrix(content, ecLevel) {
   for (const ec of tryOrder) {
     try {
       const qr = qrcode(0, ec)
-      qr.addData(content)
+      if (needsUTF8(content)) {
+        qr.addData(toUTF8Bytes(content), 'Byte')
+      } else {
+        qr.addData(content)
+      }
       qr.make()
       const count = qr.getModuleCount()
       const matrix = []

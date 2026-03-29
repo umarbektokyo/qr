@@ -135,6 +135,14 @@
 
   function toggleSection(key) { panelSections[key] = !panelSections[key] }
 
+  // Blender-style slider: drag to slide, double-click to type
+  let sliderEditing = $state(null)
+
+  function autoFocus(node) {
+    node.focus()
+    node.select()
+  }
+
   function getOpts() {
     return {
       size, fgColor, bgColor: transparentBg ? 'transparent' : bgColor, margin, shape,
@@ -893,31 +901,35 @@
         <div class="bp-body">
           <div class="field-group">
             <span class="field-label">Size (px)</span>
-            <div class="blender-slider-wrap">
-              <div class="blender-slider-track">
-                <div class="blender-slider-fill" style="width: {((size - 128) / (4096 - 128)) * 100}%"></div>
-                <span class="blender-slider-text">{size}</span>
+            {#if sliderEditing === 'size'}
+              <input use:autoFocus type="text" class="blender-slider-editbox" value={size}
+                onblur={(e) => { const n = Number(e.target.value); if (n >= 128 && n <= 4096) size = n; sliderEditing = null; }}
+                onkeydown={(e) => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') sliderEditing = null; }} />
+            {:else}
+              <div class="blender-slider-wrap" ondblclick={() => sliderEditing = 'size'}>
+                <div class="blender-slider-track">
+                  <div class="blender-slider-fill" style="width: {((size - 128) / (4096 - 128)) * 100}%"></div>
+                  <span class="blender-slider-text">{size}</span>
+                </div>
+                <input type="range" class="blender-slider-input" min="128" max="4096" step="64" bind:value={size} />
               </div>
-              <input type="number" class="blender-slider-type" min="128" max="4096" step="64" value={size}
-                onfocus={(e) => e.target.select()}
-                onchange={(e) => { const n = Math.round(Number(e.target.value) / 64) * 64; if (n >= 128 && n <= 4096) size = n; e.target.blur(); }}
-                onkeydown={(e) => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') { e.target.value = size; e.target.blur(); } }} />
-              <input type="range" class="blender-slider-input" min="128" max="4096" step="64" bind:value={size} />
-            </div>
+            {/if}
           </div>
           <div class="field-group">
             <span class="field-label">Margin (modules)</span>
-            <div class="blender-slider-wrap">
-              <div class="blender-slider-track">
-                <div class="blender-slider-fill" style="width: {(margin / 16) * 100}%"></div>
-                <span class="blender-slider-text">{margin}</span>
+            {#if sliderEditing === 'margin'}
+              <input use:autoFocus type="text" class="blender-slider-editbox" value={margin}
+                onblur={(e) => { const n = parseInt(e.target.value); if (n >= 0 && n <= 16) margin = n; sliderEditing = null; }}
+                onkeydown={(e) => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') sliderEditing = null; }} />
+            {:else}
+              <div class="blender-slider-wrap" ondblclick={() => sliderEditing = 'margin'}>
+                <div class="blender-slider-track">
+                  <div class="blender-slider-fill" style="width: {(margin / 16) * 100}%"></div>
+                  <span class="blender-slider-text">{margin}</span>
+                </div>
+                <input type="range" class="blender-slider-input" min="0" max="16" step="1" bind:value={margin} />
               </div>
-              <input type="number" class="blender-slider-type" min="0" max="16" step="1" value={margin}
-                onfocus={(e) => e.target.select()}
-                onchange={(e) => { const n = parseInt(e.target.value); if (n >= 0 && n <= 16) margin = n; e.target.blur(); }}
-                onkeydown={(e) => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') { e.target.value = margin; e.target.blur(); } }} />
-              <input type="range" class="blender-slider-input" min="0" max="16" step="1" bind:value={margin} />
-            </div>
+            {/if}
           </div>
         </div>
         {/if}
@@ -1204,21 +1216,12 @@
     position: absolute; inset: 0; width: 100%; height: 100%;
     opacity: 0; cursor: ew-resize; margin: 0;
   }
-  .blender-slider-type {
-    position: absolute; inset: 0; width: 100%; height: 100%;
-    background: transparent; border: none; border-radius: 6px;
-    color: transparent; font-family: 'Inter', sans-serif; font-size: 11px;
-    text-align: center; outline: none; caret-color: transparent;
-    z-index: 3; margin: 0; padding: 0; cursor: ew-resize;
-    -moz-appearance: textfield;
+  .blender-slider-editbox {
+    width: 100%; height: 22px; border: none; border-radius: 6px;
+    background: #1e1e1e; color: #e6e6e6; font-family: 'Inter', sans-serif;
+    font-size: 11px; text-align: center; outline: none;
+    box-shadow: 0 0 0 1px #4b76c2;
   }
-  .blender-slider-type::-webkit-inner-spin-button,
-  .blender-slider-type::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-  .blender-slider-type:focus {
-    background: #1e1e1e; color: #e6e6e6; cursor: text;
-    box-shadow: 0 0 0 1px #4b76c2; caret-color: #e6e6e6;
-  }
-  .blender-slider-type:focus ~ .blender-slider-input { pointer-events: none; }
 
   .btn-row { display: flex; gap: 2px; }
   .btn-sm { padding: 3px 10px; font-size: 11px; height: 22px; flex: 1; text-align: center; }
@@ -1366,6 +1369,14 @@
   .status-sep { color: #444; }
   .status-warn { color: #e8a33d; }
   .status-err { color: #e85050; }
+
+  /* Mobile: larger touch targets */
+  @media (pointer: coarse) {
+    .blender-slider-wrap { touch-action: pan-x; }
+    .bw { min-height: 36px; }
+    .btn-sm { min-height: 32px; }
+    .checkbox-btn { min-width: 28px; min-height: 28px; }
+  }
 
   /* Mobile responsive */
   @media (max-width: 700px) {

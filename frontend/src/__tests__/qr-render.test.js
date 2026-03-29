@@ -81,4 +81,30 @@ describe('generateMatrix', () => {
     // Bottom-right should NOT have a finder pattern
     expect(matrix[n - 1][n - 1]).toBe(false)
   })
+
+  it('encodes Japanese text (UTF-8)', () => {
+    const { matrix } = generateMatrix('こんにちは', 'M')
+    expect(matrix).toBeDefined()
+    expect(matrix.length).toBeGreaterThan(0)
+    expect(matrix[0].length).toBe(matrix.length)
+  })
+
+  it('encodes emoji (UTF-8)', () => {
+    const { matrix } = generateMatrix('Hello 👋 World', 'M')
+    expect(matrix).toBeDefined()
+    expect(matrix.length).toBeGreaterThan(0)
+  })
+
+  it('encodes mixed ASCII and CJK text', () => {
+    const { matrix } = generateMatrix('QR コード test 测试', 'M')
+    expect(matrix).toBeDefined()
+    expect(matrix.length).toBeGreaterThan(0)
+  })
+
+  it('produces different matrices for ASCII vs UTF-8 encoding paths', () => {
+    const { matrix: ascii } = generateMatrix('hello', 'M')
+    const { matrix: utf8 } = generateMatrix('こんにちは', 'M')
+    // Different content should produce different sized or different matrices
+    expect(utf8.length).not.toBe(ascii.length)
+  })
 })

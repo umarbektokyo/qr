@@ -7,7 +7,7 @@ QR codes are generated entirely client-side for instant preview with zero networ
 ## Features
 
 **Content**
-- Encode any URL or text
+- Encode any URL or text, including Unicode (Japanese, Chinese, emoji, etc.)
 - Error correction levels: L (7%), M (15%), Q (25%), H (30%)
 - Auto-fallback to lower EC when content is too long
 - Batch mode: generate multiple QR codes at once with custom names
