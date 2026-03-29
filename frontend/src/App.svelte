@@ -1373,9 +1373,14 @@
   /* Mobile: larger touch targets */
   @media (pointer: coarse) {
     .blender-slider-wrap { touch-action: pan-x; }
-    .bw { min-height: 36px; }
+    .bw { min-height: 36px; border-radius: 8px; }
     .btn-sm { min-height: 32px; }
-    .checkbox-btn { min-width: 28px; min-height: 28px; }
+    .checkbox-btn { min-width: 28px; min-height: 28px; border-radius: 6px; }
+    .header-bar { height: 44px; padding: 0 10px; }
+    .header-type-btn { height: 34px; font-size: 13px; padding: 4px 10px 4px 8px; }
+    .icon-sq { width: 34px; height: 34px; }
+    .icon-sq svg { width: 18px; height: 18px; }
+    .header-sep { height: 20px; }
   }
 
   /* Mobile responsive */
